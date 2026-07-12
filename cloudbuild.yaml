@@ -1,0 +1,74 @@
+# cloudbuild.yaml
+# Triggered by Cloud Build on every push (see docs/10-deployment.md / the
+# GCP setup guide for how to wire the trigger up in the console).
+#
+# Builds the backend image, pushes it to Artifact Registry, then deploys
+# it to Cloud Run. All substitution variables below (the `_` prefixed
+# ones) have sane defaults but should be overridden per-environment from
+# the trigger's "Substitution variables" section in the Cloud Build UI —
+# no need to edit this file for that.
+
+steps:
+  # 1. Build the backend image
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "-f"
+      - "docker/backend.Dockerfile"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:${SHORT_SHA}"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:latest"
+      - "."
+    id: build
+
+  # 2. Push both tags to Artifact Registry
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "push"
+      - "--all-tags"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}"
+    id: push
+    waitFor: ["build"]
+
+  # 3. Deploy to Cloud Run.
+  #    Secrets (GROQ_API_KEY, TAVILY_API_KEY, API_KEY) are pulled from
+  #    Secret Manager at deploy time via --set-secrets, NOT baked into the
+  #    image or passed as plain --set-env-vars. Create these secrets once
+  #    in the console before the first deploy (see the GCP setup guide).
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      - "run"
+      - "deploy"
+      - "${_SERVICE_NAME}"
+      - "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:${SHORT_SHA}"
+      - "--region=${_REGION}"
+      - "--platform=managed"
+      - "--allow-unauthenticated"
+      - "--port=8000"
+      - "--memory=1Gi"
+      - "--cpu=1"
+      - "--timeout=300"
+      - "--min-instances=0"
+      - "--max-instances=4"
+      - "--set-env-vars=GROQ_MODEL=llama-3.3-70b-versatile,SESSION_TTL_SECONDS=21600,MAX_UPLOAD_MB=50,LLM_MAX_CONTEXT_CHARS=8000,ALLOWED_ORIGINS=${_ALLOWED_ORIGINS},SEND_SAMPLE_ROWS_TO_LLM=false"
+      - "--set-secrets=GROQ_API_KEY=GROQ_API_KEY:latest,TAVILY_API_KEY=TAVILY_API_KEY:latest,API_KEY=API_KEY:latest"
+    id: deploy
+    waitFor: ["push"]
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:${SHORT_SHA}"
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:latest"
+
+substitutions:
+  _REGION: us-central1
+  _REPO: clustermaster
+  _SERVICE_NAME: clustermaster-backend
+  # Set this to your deployed frontend's real origin once you have one,
+  # e.g. https://clustermaster-frontend-xyz-uc.a.run.app . "*" is fine
+  # while you're still wiring things up but should be tightened after.
+  _ALLOWED_ORIGINS: "*"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
