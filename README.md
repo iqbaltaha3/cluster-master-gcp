@@ -38,7 +38,7 @@ Or run without Docker — see `docs/10-deployment.md`.
    dtypes + a few sample rows to Groq to infer search queries, researches
    them via Tavily, and writes a short domain brief.
 2. Every subsequent agent's prompt is built from three things:
-   - the domain brief,
+   - the domain brief
    - one-line takeaways from every prior stage (`project_memory`),
    - its own stage's freshly computed statistics.
 3. Each agent writes its own report and takeaway back to the shared
